@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+.uv-cache/
+.edge-profile*/
+server*.log
+reference/
+static/uploads/*
+!static/uploads/.gitkeep

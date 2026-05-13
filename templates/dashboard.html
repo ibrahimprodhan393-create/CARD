@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% set body_class = "shop-body" %}
+{% set title = "Russian Market" %}
+
+{% block content %}
+<main class="phone-shell">
+  <header class="shop-header">
+    <div class="brand-line">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span>
+      </div>
+      <div>
+        <strong>Russian Market</strong>
+        <small>{{ user.profile_name or user.username }}</small>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button class="mode-button" type="button" data-theme-toggle>
+        <span class="mode-dot"></span>
+        dark
+      </button>
+      <span class="balance-pill">{{ user.balance | money }}</span>
+      <a class="history-pill" href="#historySection">History</a>
+      <button class="deposit-pill" type="button" data-open-modal="depositModal">
+        <span class="mini-card-icon"></span>
+        Deposit
+      </button>
+      <form method="post" action="{{ url_for('logout') }}">
+        <button class="logout-button" type="submit">Logout</button>
+      </form>
+    </div>
+  </header>
+
+  <section class="section-block history-overview" id="historySection">
+    <div class="section-title">
+      <span class="history-icon"></span>
+      <h1>History</h1>
+    </div>
+
+    <div class="history-summary-grid">
+      <article>
+        <span>Last Purchase</span>
+        {% if latest_order %}
+          <strong>{{ latest_order.country }} {{ latest_order.network }}</strong>
+          <small>{{ latest_order.price | money }} - {{ latest_order.status }}</small>
+        {% else %}
+          <strong>No purchase</strong>
+          <small>Buy a card to see it here.</small>
+        {% endif %}
+      </article>
+      <article>
+        <span>Deposit History</span>
+        {% if latest_deposit %}
+          <strong>{{ latest_deposit.currency }} {{ latest_deposit.amount | money }}</strong>
+          <small>{{ latest_deposit.status }} - {{ latest_deposit.txid }}</small>
+        {% else %}
+          <strong>No deposit</strong>
+          <small>Submit payment to build history.</small>
+        {% endif %}
+      </article>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">
+      <span class="shop-icon"></span>
+      <h1>Card Shop</h1>
+    </div>
+    <p class="stock-line">
+      <span></span>
+      In Stock ({{ cards | selectattr("status", "equalto", "in_stock") | list | length }} cards)
+    </p>
+
+    <div class="card-list">
+      {% for card in cards %}
+        {% set available = card.status == "in_stock" %}
+        {% set can_buy = available and (user.balance | float) >= (card.price | float) %}
+        <article class="market-card">
+          <span class="stock-pill {{ 'is-muted' if not available else '' }}">
+            {% if card.status == "upcoming" %}Upcoming{% elif available %}In Stock{% else %}Hidden{% endif %}
+          </span>
+
+          <div class="country-line">
+            <span class="flag flag-{{ card.country_code|lower }}"></span>
+            <h2>{{ card.country }}</h2>
+          </div>
+
+          <div class="network-chip network-{{ card.network | network_slug }}">
+            <span></span>
+            {{ card.network }}
+          </div>
+
+          {% if card.image_data %}
+            <img class="card-art" src="data:{{ card.image_mime }};base64,{{ card.image_data }}" alt="{{ card.country }} card">
+          {% elif card.image_filename %}
+            <img class="card-art" src="{{ url_for('static', filename='uploads/' ~ card.image_filename) }}" alt="{{ card.country }} card">
+          {% endif %}
+
+          <div class="price-line">{{ card.price | money }}</div>
+
+          <div class="preload-row">
+            <span>Preload:</span>
+            <strong>{{ card.preload | money }}</strong>
+          </div>
+
+          <div class="location-line">
+            <span class="pin-icon"></span>
+            {{ card.city }}
+          </div>
+
+          <div class="number-strip">
+            <span>{{ card.masked_number }}</span>
+            <span>Exp: {{ card.expiry }}</span>
+          </div>
+
+          <form method="post" action="{{ url_for('purchase', card_id=card.id) }}">
+            <button
+              class="purchase-button {{ '' if can_buy else 'disabled' }}"
+              type="submit"
+              {% if not can_buy %}disabled{% endif %}
+            >
+              {% if not available %}
+                Not available
+              {% elif can_buy %}
+                Purchase
+              {% else %}
+                Insufficient
+              {% endif %}
+            </button>
+          </form>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="section-block compact-section">
+    <div class="section-title">
+      <span class="owned-icon"></span>
+      <h2>My Cards</h2>
+    </div>
+
+    {% if orders %}
+      <div class="history-list">
+        {% for order in orders %}
+          <article class="history-item">
+            <div>
+              <strong>{{ order.country }} {{ order.network }}</strong>
+              <span>{{ order.price | money }} - {{ order.status }}</span>
+            </div>
+            {% if order.status == "approved" %}
+              <pre>{{ order.full_details }}</pre>
+            {% else %}
+              <p>Waiting for admin approval.</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-text">No purchased cards yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="section-block compact-section">
+    <div class="section-title">
+      <span class="deposit-history-icon"></span>
+      <h2>Deposit History</h2>
+    </div>
+
+    {% if deposits %}
+      <div class="history-list">
+        {% for deposit in deposits %}
+          <article class="history-item slim">
+            <strong>{{ deposit.currency }} {{ deposit.amount | money }}</strong>
+            <span>{{ deposit.status }} - {{ deposit.txid }}</span>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty-text">No deposit submitted yet.</p>
+    {% endif %}
+  </section>
+</main>
+
+<div class="modal-backdrop is-hidden" id="depositModal" role="dialog" aria-modal="true" aria-labelledby="depositTitle">
+  <section class="deposit-modal">
+    <button class="modal-close" type="button" data-close-modal="depositModal" aria-label="Close">x</button>
+    <h2 id="depositTitle">
+      <span class="deposit-title-icon"></span>
+      Deposit Cryptocurrency
+    </h2>
+    <p>Send to any address below, then submit your transaction ID.</p>
+
+    <div class="address-list">
+      {% for address in addresses %}
+        <article class="address-card">
+          <div>
+            <strong>{{ address.currency }}</strong>
+            <span>({{ address.network }})</span>
+          </div>
+          <code>{{ address.address }}</code>
+          <button type="button" data-copy="{{ address.address }}">Copy</button>
+        </article>
+      {% endfor %}
+    </div>
+
+    <form class="deposit-form" method="post" action="{{ url_for('create_deposit') }}">
+      <label>
+        <span>Currency</span>
+        <select name="currency" required>
+          {% for address in addresses %}
+            <option value="{{ address.currency }}">{{ address.currency }} ({{ address.network }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Amount</span>
+        <input name="amount" type="number" min="1" step="0.01" placeholder="Enter amount" required>
+      </label>
+      <label>
+        <span>Transaction ID / Hash</span>
+        <input name="txid" type="text" placeholder="Paste Transaction ID / Hash" required>
+      </label>
+      <button class="gradient-button" type="submit">Submit Payment</button>
+    </form>
+
+    <p class="modal-note">Balance updates after manual confirmation, usually 10-30 min.</p>
+  </section>
+</div>
+{% endblock %}

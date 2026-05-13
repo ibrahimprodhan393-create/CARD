@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set body_class = "login-body" %}
+{% set title = "Russian Market Login" %}
+
+{% block content %}
+<main class="login-screen">
+  <section class="login-card" aria-label="Russian Market sign in">
+    <img
+      class="login-logo"
+      src="{{ url_for('static', filename='images/login-logo.png') }}"
+      alt="Russian Market"
+    >
+
+    <h1>
+      {% if mode == "register" %}
+        Create Account
+      {% elif mode == "admin" %}
+        Admin Panel
+      {% else %}
+        Welcome Back
+      {% endif %}
+    </h1>
+
+    <nav class="login-tabs" aria-label="Login options">
+      <a class="{{ 'active' if mode != 'admin' and mode != 'register' else '' }}" href="{{ url_for('login') }}">User</a>
+      <a class="{{ 'active' if mode == 'register' else '' }}" href="{{ url_for('login', mode='register') }}">Create</a>
+      <a class="{{ 'active' if mode == 'admin' else '' }}" href="{{ url_for('login', mode='admin') }}">Admin</a>
+    </nav>
+
+    <form
+      class="auth-form"
+      method="post"
+      action="{% if mode == 'register' %}{{ url_for('register') }}{% elif mode == 'admin' %}{{ url_for('admin_login') }}{% else %}{{ url_for('login') }}{% endif %}"
+    >
+      <label>
+        <span>{% if mode == "admin" %}Admin Username{% else %}Username{% endif %}</span>
+        <input name="username" type="text" placeholder="{% if mode == 'admin' %}Enter admin username{% else %}Enter username{% endif %}" autocomplete="username" required>
+      </label>
+
+      {% if mode == "register" %}
+        <label>
+          <span>Profile Name</span>
+          <input name="profile_name" type="text" placeholder="Enter profile name" autocomplete="nickname" required>
+        </label>
+      {% endif %}
+
+      <label>
+        <span>{% if mode == "admin" %}Admin Password{% else %}Password{% endif %}</span>
+        <input name="password" type="password" placeholder="........" autocomplete="{% if mode == 'register' %}new-password{% else %}current-password{% endif %}" required>
+      </label>
+
+      <button class="gradient-button auth-submit" type="submit">
+        <span class="button-arrow">-&gt;</span>
+        {% if mode == "register" %}Create Account{% elif mode == "admin" %}Open Admin{% else %}Sign In{% endif %}
+      </button>
+    </form>
+
+    {% if mode == "register" %}
+      <a class="auth-switch" href="{{ url_for('login') }}">Already have an account</a>
+    {% elif mode == "admin" %}
+      <a class="auth-switch" href="{{ url_for('login') }}">Back to user login</a>
+    {% else %}
+      <a class="auth-switch" href="{{ url_for('login', mode='register') }}">Create account</a>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

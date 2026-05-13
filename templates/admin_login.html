@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set body_class = "admin-login-body" %}
+{% set title = "Russian Market Admin" %}
+
+{% block content %}
+<main class="admin-login-screen">
+  <section class="admin-login-card">
+    <div class="brand-line">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div>
+        <strong>Russian Market</strong>
+        <small>Admin panel</small>
+      </div>
+    </div>
+
+    <form class="auth-form" method="post" action="{{ url_for('admin_login') }}">
+      <label>
+        <span>Admin username</span>
+        <input name="username" type="text" autocomplete="username" required>
+      </label>
+      <label>
+        <span>Admin password</span>
+        <input name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="gradient-button" type="submit">Sign In</button>
+    </form>
+  </section>
+</main>
+{% endblock %}
