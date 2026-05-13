@@ -40,10 +40,12 @@ Render settings:
 
 - Build Command: `pip install -r requirements.txt`
 - Start Command: `gunicorn app:app --bind 0.0.0.0:$PORT`
+- Python Version: `3.13`
 
 Environment variables to set in Render:
 
 - `SECRET_KEY`
+- `PYTHON_VERSION=3.13`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `DATABASE_URL`
