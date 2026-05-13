@@ -38,7 +38,12 @@
 
       <label>
         <span>Password</span>
-        <input name="password" type="password" placeholder="........" autocomplete="{% if mode == 'register' %}new-password{% else %}current-password{% endif %}" required>
+        <span class="password-field">
+          <input name="password" type="password" placeholder="........" autocomplete="{% if mode == 'register' %}new-password{% else %}current-password{% endif %}" required>
+          <button type="button" data-toggle-password aria-label="Show password">
+            <span></span>
+          </button>
+        </span>
       </label>
 
       <button class="gradient-button auth-submit" type="submit">
@@ -48,7 +53,7 @@
     </form>
 
     {% if mode == "register" %}
-      <a class="auth-switch" href="{{ url_for('login') }}">Already have an account</a>
+      <a class="auth-switch" href="{{ url_for('login') }}">Sign In</a>
     {% else %}
       <a class="auth-switch" href="{{ url_for('login', mode='register') }}">Create account</a>
     {% endif %}

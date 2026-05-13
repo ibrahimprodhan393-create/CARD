@@ -201,6 +201,53 @@ a {
   box-shadow: 0 0 0 4px rgba(224, 12, 99, 0.08);
 }
 
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 58px;
+}
+
+.password-field button {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #eef2f8;
+  transform: translateY(-50%);
+}
+
+.password-field button span {
+  position: relative;
+  width: 19px;
+  height: 12px;
+  border: 2px solid #596174;
+  border-radius: 999px / 70%;
+}
+
+.password-field button span::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #596174;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.password-field button.is-visible {
+  background: #ffe9f1;
+}
+
 .auth-submit {
   width: 100%;
   min-height: 82px;
@@ -346,8 +393,59 @@ a {
 }
 
 .balance-pill {
-  background: #1e2233;
+  min-height: 48px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 42%),
+    linear-gradient(135deg, #171b2b, #2b3148);
   color: #fff;
+  padding: 8px 15px;
+  box-shadow: 0 12px 28px rgba(20, 25, 42, 0.18);
+}
+
+.balance-pill span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.balance-pill strong {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.help-bubble {
+  position: relative;
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--pink);
+  text-decoration: none;
+  box-shadow: 0 8px 18px rgba(35, 40, 58, 0.1);
+}
+
+.help-bubble span {
+  width: 20px;
+  height: 15px;
+  border-radius: 9px;
+  background: currentColor;
+}
+
+.help-bubble span::after {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  width: 7px;
+  height: 7px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  content: "";
 }
 
 .history-pill {
@@ -451,7 +549,7 @@ a {
 
 .network-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
   gap: 7px;
 }
 
@@ -1274,6 +1372,26 @@ a {
 
 .danger-button {
   background: #d73745;
+}
+
+.danger-button.compact {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.site-footer {
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: 0 14px 22px;
+  color: #697184;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-body .site-footer {
+  width: min(1180px, calc(100% - 28px));
 }
 
 .admin-row {

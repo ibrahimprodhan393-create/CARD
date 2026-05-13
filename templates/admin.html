@@ -91,9 +91,20 @@
     <form class="admin-card-form" method="post" action="{{ url_for('admin_add_card') }}" enctype="multipart/form-data">
       <input name="country" placeholder="USA" required>
       <input name="country_code" placeholder="us" required>
-      <select name="network"><option>Visa</option><option>Mastercard</option><option>Amex</option></select>
+      <input name="network" list="networkOptions" placeholder="Visa / Debit Card" required>
+      <datalist id="networkOptions">
+        {% for option in network_options %}
+          <option value="{{ option.network }}">
+        {% endfor %}
+        <option value="Visa">
+        <option value="Mastercard">
+        <option value="Amex">
+        <option value="Debit Card">
+        <option value="Credit Card">
+      </datalist>
       <input name="price" type="number" min="0" step="0.01" placeholder="Price" required>
       <input name="preload" type="number" min="0" step="0.01" placeholder="Preload" required>
+      <input name="display_stock" type="number" min="0" step="1" placeholder="Show stock count">
       <input name="city" placeholder="City" required>
       <input name="masked_number" placeholder="5441 7074 **** ****" required>
       <input name="expiry" placeholder="03/27" required>
@@ -105,13 +116,14 @@
     <div class="admin-list">
       {% for card in cards %}
         <details class="admin-item">
-          <summary><strong>#{{ card.id }} {{ card.country }} {{ card.network }}</strong><span>{{ card.status }} - {{ card.price | money }} - {{ card.available_stock }} stock</span></summary>
+          <summary><strong>#{{ card.id }} {{ card.country }} {{ card.network }}</strong><span>{{ card.status }} - {{ card.price | money }} - showing {{ card.shown_stock }} / real {{ card.available_stock }} stock</span></summary>
           <form class="admin-card-form edit" method="post" action="{{ url_for('admin_update_card', card_id=card.id) }}" enctype="multipart/form-data">
             <input name="country" value="{{ card.country }}" required>
             <input name="country_code" value="{{ card.country_code }}" required>
-            <select name="network">{% for network in ["Visa", "Mastercard", "Amex"] %}<option {% if card.network == network %}selected{% endif %}>{{ network }}</option>{% endfor %}</select>
+            <input name="network" list="networkOptions" value="{{ card.network }}" required>
             <input name="price" type="number" min="0" step="0.01" value="{{ card.price }}" required>
             <input name="preload" type="number" min="0" step="0.01" value="{{ card.preload }}" required>
+            <input name="display_stock" type="number" min="0" step="1" value="{{ card.display_stock }}">
             <input name="city" value="{{ card.city }}" required>
             <input name="masked_number" value="{{ card.masked_number }}" required>
             <input name="expiry" value="{{ card.expiry }}" required>
@@ -133,7 +145,7 @@
     <form class="admin-card-form" method="post" action="{{ url_for('admin_add_stock') }}">
       <select name="card_id" required>
         {% for card in cards %}
-          <option value="{{ card.id }}">#{{ card.id }} {{ card.country }} {{ card.network }} - {{ card.available_stock }} ready</option>
+          <option value="{{ card.id }}">#{{ card.id }} {{ card.country }} {{ card.network }} - showing {{ card.shown_stock }} / real {{ card.available_stock }} ready</option>
         {% endfor %}
       </select>
       <textarea name="details" placeholder="Stock details item 1&#10;---&#10;Stock details item 2" required></textarea>
@@ -172,6 +184,8 @@
           {% if order.status == "pending" %}
             <form class="order-approve-form" method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='approve') }}"><textarea name="delivered_details" placeholder="Optional delivered details"></textarea><button class="small-button" type="submit">Approve</button></form>
             <form method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='reject') }}"><button class="danger-button" type="submit">Reject</button></form>
+          {% else %}
+            <form method="post" action="{{ url_for('admin_delete_order', order_id=order.id) }}"><button class="danger-button" type="submit">Delete</button></form>
           {% endif %}
         </article>
       {% endfor %}
@@ -187,6 +201,8 @@
           {% if custom.status == "pending" %}
             <form method="post" action="{{ url_for('admin_review_custom_order', custom_order_id=custom.id, action='approve') }}"><button class="small-button" type="submit">Approve</button></form>
             <form method="post" action="{{ url_for('admin_review_custom_order', custom_order_id=custom.id, action='reject') }}"><button class="danger-button" type="submit">Reject</button></form>
+          {% else %}
+            <form method="post" action="{{ url_for('admin_delete_custom_order', custom_order_id=custom.id) }}"><button class="danger-button" type="submit">Delete</button></form>
           {% endif %}
         </article>
       {% endfor %}
@@ -206,9 +222,13 @@
           <summary><span>{{ user.id }}</span><span>{{ user.public_id }}</span><span>{{ user.username }}</span><span>{{ user.profile_name or user.username }}</span><span>{{ user.balance | money }}</span><span>{{ user.created_at }}</span></summary>
           {% set details = user_details.get(user.id) %}
           <div class="user-detail-grid">
-            <article><h3>Deposits</h3>{% for deposit in details.deposits %}<p>{{ deposit.currency }} {{ deposit.amount | money }} - {{ deposit.status }}</p>{% endfor %}</article>
-            <article><h3>Orders</h3>{% for order in details.orders %}<p>{{ order.country }} {{ order.network }} x{{ order.quantity }} - {{ order.status }}</p>{% endfor %}</article>
-            <article><h3>Custom</h3>{% for custom in details.custom_orders %}<p>{{ custom.card_type }} x{{ custom.quantity }} - {{ custom.status }}</p>{% endfor %}</article>
+            {% if details %}
+              <article><h3>Deposits</h3>{% for deposit in details.deposits %}<p>{{ deposit.currency }} {{ deposit.amount | money }} - {{ deposit.status }}</p>{% endfor %}</article>
+              <article><h3>Orders</h3>{% for order in details.orders %}<p>{{ order.country }} {{ order.network }} x{{ order.quantity }} - {{ order.status }}</p>{% endfor %}</article>
+              <article><h3>Custom</h3>{% for custom in details.custom_orders %}<p>{{ custom.card_type }} x{{ custom.quantity }} - {{ custom.status }}</p>{% endfor %}</article>
+            {% else %}
+              <article><h3>Details</h3><p>Search this user ID to load deposit and order details.</p></article>
+            {% endif %}
           </div>
         </details>
       {% endfor %}
@@ -216,7 +236,7 @@
   </section>
 
   <section class="admin-panel admin-section" data-admin-section="helper">
-    <div class="panel-title"><h1>Helper Settings</h1><p>This email appears in the user Help section.</p></div>
+    <div class="panel-title"><h1>Helper Settings</h1><p>This email opens from the user message icon.</p></div>
     <form class="admin-grid-form" method="post" action="{{ url_for('admin_update_settings') }}">
       <input name="helper_email" type="email" value="{{ helper_email }}" placeholder="support@example.com" required>
       <button class="gradient-button" type="submit">Save Helper Email</button>

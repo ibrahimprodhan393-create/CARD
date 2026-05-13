@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+HASH_METHOD = "pbkdf2:sha256:180000"
 SQLITE_PATH = os.getenv(
     "SQLITE_PATH",
     os.path.join(os.path.dirname(__file__), "russian_market.db"),
@@ -124,6 +125,7 @@ def init_db():
                     masked_number TEXT NOT NULL,
                     expiry TEXT NOT NULL,
                     full_details TEXT NOT NULL,
+                    display_stock INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'in_stock',
                     image_filename TEXT,
                     image_mime TEXT,
@@ -226,6 +228,7 @@ def init_db():
                     masked_number TEXT NOT NULL,
                     expiry TEXT NOT NULL,
                     full_details TEXT NOT NULL,
+                    display_stock INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL DEFAULT 'in_stock',
                     image_filename TEXT,
                     image_mime TEXT,
@@ -348,7 +351,7 @@ def ensure_user_columns():
                 cur.execute("ALTER TABLE users ADD COLUMN profile_name TEXT")
                 cur.execute("UPDATE users SET profile_name = username WHERE profile_name IS NULL")
             if "public_id" not in columns:
-                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT UNIQUE")
+                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT")
         else:
             cur.execute("PRAGMA table_info(users)")
             columns = {row["name"] for row in cur.fetchall()}
@@ -356,7 +359,7 @@ def ensure_user_columns():
                 cur.execute("ALTER TABLE users ADD COLUMN profile_name TEXT")
                 cur.execute("UPDATE users SET profile_name = username WHERE profile_name IS NULL")
             if "public_id" not in columns:
-                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT UNIQUE")
+                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT")
 
         cur.execute("SELECT id FROM users WHERE public_id IS NULL OR public_id = ''")
         missing = cur.fetchall()
@@ -365,7 +368,11 @@ def ensure_user_columns():
 
 
 def ensure_card_image_columns():
-    wanted = {"image_mime": "TEXT", "image_data": "TEXT"}
+    wanted = {
+        "image_mime": "TEXT",
+        "image_data": "TEXT",
+        "display_stock": "INTEGER NOT NULL DEFAULT 0",
+    }
     with connection() as conn:
         cur = conn.cursor()
         if using_postgres():
@@ -423,10 +430,12 @@ def ensure_site_settings_table():
 def ensure_indexes():
     statements = [
         "CREATE INDEX IF NOT EXISTS idx_users_public_id ON users(public_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_id_unique ON users(public_id)",
         "CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_deposits_user_status ON deposits(user_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_card_stock_card_status ON card_stock(card_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_custom_orders_user_status ON custom_orders(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_cards_status_network ON cards(status, network)",
     ]
     with connection() as conn:
         cur = conn.cursor()
@@ -444,7 +453,7 @@ def seed_admin_credentials():
         "admin_credentials",
         {
             "username": username,
-            "password_hash": generate_password_hash(password),
+            "password_hash": generate_password_hash(password, method=HASH_METHOD),
         },
     )
 
@@ -515,6 +524,7 @@ def seed_defaults():
                         f"City: {city}\n"
                         "Status: Approved by admin"
                     ),
+                    "display_stock": 7 if status == "in_stock" else 0,
                     "status": status,
                     "image_filename": None,
                 },

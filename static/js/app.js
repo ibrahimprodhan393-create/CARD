@@ -11,12 +11,14 @@
     const userTab = event.target.closest("[data-section-tab]");
     if (userTab) {
       showUserSection(userTab.dataset.sectionTab);
+      localStorage.setItem("russian-market-user-section", userTab.dataset.sectionTab);
       return;
     }
 
     const adminTab = event.target.closest("[data-admin-tab]");
     if (adminTab) {
       showAdminSection(adminTab.dataset.adminTab);
+      localStorage.setItem("russian-market-admin-section", adminTab.dataset.adminTab);
       return;
     }
 
@@ -58,6 +60,9 @@
       const id = buyCart.dataset.buyCart;
       const item = getCart().find((entry) => entry.id === id);
       if (!item) return;
+      if (!window.confirm("Confirm purchase?")) {
+        return;
+      }
       saveCart(getCart().filter((entry) => entry.id !== id));
       submitPurchase(item);
       return;
@@ -112,6 +117,17 @@
       } catch (error) {
         copyButton.textContent = "Copy failed";
       }
+    }
+
+    const passwordToggle = event.target.closest("[data-toggle-password]");
+    if (passwordToggle) {
+      const input = passwordToggle.closest(".password-field")?.querySelector("input");
+      if (!input) return;
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      passwordToggle.classList.toggle("is-visible", !visible);
+      passwordToggle.setAttribute("aria-label", visible ? "Show password" : "Hide password");
+      return;
     }
   });
 
@@ -261,10 +277,18 @@
       }
     };
     await check();
-    setInterval(check, 7000);
+    setInterval(check, 4000);
   }
 
   renderCart();
   filterCards();
+  const storedUserSection = localStorage.getItem("russian-market-user-section");
+  if (storedUserSection && document.querySelector(`[data-user-section="${storedUserSection}"]`)) {
+    showUserSection(storedUserSection);
+  }
+  const storedAdminSection = localStorage.getItem("russian-market-admin-section");
+  if (storedAdminSection && document.querySelector(`[data-admin-section="${storedAdminSection}"]`)) {
+    showAdminSection(storedAdminSection);
+  }
   setupLiveRefresh();
 })();

@@ -12,6 +12,7 @@ Flask website with:
 - User unique IDs are generated automatically and searchable from the admin panel.
 - User and admin screens use section tabs so only the selected section is shown.
 - Product stock can be uploaded in advance; purchases auto-deliver available stock, otherwise the order waits for admin approval.
+- Admin can set the visible stock number separately, add custom card types/networks, and delete completed/rejected orders.
 - Custom card order and helper email settings are included.
 - Card upload images are stored in the database, so Render redeploys do not remove uploaded product images when `DATABASE_URL` is set.
 - Neon Postgres support through `DATABASE_URL`, with SQLite fallback for local testing.
@@ -55,3 +56,13 @@ Environment variables to set in Render:
 - `DATABASE_URL`
 
 Use a Neon pooled Postgres URL for `DATABASE_URL`; Render's filesystem is not meant for permanent SQLite data.
+
+## Neon SQL
+
+The app creates and updates tables automatically on startup. If you want to prepare Neon manually, open Neon SQL Editor and run:
+
+```sql
+-- See neon_setup.sql in this folder.
+```
+
+`neon_setup.sql` creates the tables, adds missing columns, adds fast indexes for login/search/orders/deposits, and runs `ANALYZE`.

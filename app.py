@@ -32,6 +32,7 @@ from db import connection, execute, init_db, insert, query_all, query_one, using
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+HASH_METHOD = "pbkdf2:sha256:180000"
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "change-this-secret-key")
@@ -46,6 +47,18 @@ def money_value(value):
     except (InvalidOperation, ValueError):
         amount = Decimal("0")
     return amount.quantize(Decimal("0.01"))
+
+
+def int_value(value, default=0, minimum=0, maximum=None):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    if minimum is not None:
+        number = max(minimum, number)
+    if maximum is not None:
+        number = min(maximum, number)
+    return number
 
 
 @app.template_filter("money")
@@ -192,7 +205,7 @@ def register():
             "username": username,
             "public_id": generate_public_id(),
             "profile_name": profile_name,
-            "password_hash": generate_password_hash(password),
+            "password_hash": generate_password_hash(password, method=HASH_METHOD),
             "balance": 0,
         },
     )
@@ -217,9 +230,10 @@ def dashboard():
         """
         SELECT cards.id, cards.country, cards.country_code, cards.network,
                cards.price, cards.preload, cards.city, cards.masked_number,
-               cards.expiry, cards.status, cards.image_filename, cards.image_mime,
+               cards.expiry, cards.status, cards.display_stock, cards.image_filename, cards.image_mime,
                CASE WHEN cards.image_data IS NOT NULL THEN 1 ELSE 0 END AS has_image_data,
-               COALESCE(stock.available_stock, 0) AS available_stock
+               COALESCE(stock.available_stock, 0) AS available_stock,
+               COALESCE(NULLIF(cards.display_stock, 0), COALESCE(stock.available_stock, 0), 0) AS shown_stock
         FROM cards
         LEFT JOIN (
             SELECT card_id, COUNT(*) AS available_stock
@@ -255,18 +269,16 @@ def dashboard():
         "SELECT * FROM custom_orders WHERE user_id = ? ORDER BY id DESC LIMIT 20",
         (user["id"],),
     )
-    latest_order = orders[0] if orders else None
-    latest_deposit = deposits[0] if deposits else None
+    networks = sorted({card["network"] for card in cards if card.get("network")})
     return render_template(
         "dashboard.html",
         user=user,
         cards=cards,
+        networks=networks,
         addresses=addresses,
         orders=orders,
         deposits=deposits,
         custom_orders=custom_orders,
-        latest_order=latest_order,
-        latest_deposit=latest_deposit,
         helper_email=get_setting("helper_email", "support@example.com"),
     )
 
@@ -310,7 +322,6 @@ def create_deposit():
             "status": "pending",
         },
     )
-    flash("Payment submitted. Balance updates after admin confirmation.", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -376,10 +387,6 @@ def purchase(card_id):
                     ("sold", order_id, item["id"]),
                 )
 
-    if auto_approve:
-        flash("Purchase complete. Card details are now in My Cards.", "success")
-    else:
-        flash("Purchase request sent. Admin approval will unlock the card details.", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -403,7 +410,32 @@ def custom_order():
             "status": "pending",
         },
     )
-    flash("Custom order submitted. Admin will review it.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/orders/<int:order_id>/delete")
+@login_required
+def user_delete_order(order_id):
+    user = current_user()
+    order = query_one(
+        "SELECT id, status FROM orders WHERE id = ? AND user_id = ?",
+        (order_id, user["id"]),
+    )
+    if order and order["status"] == "rejected":
+        execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/custom-orders/<int:custom_order_id>/delete")
+@login_required
+def user_delete_custom_order(custom_order_id):
+    user = current_user()
+    custom = query_one(
+        "SELECT id, status FROM custom_orders WHERE id = ? AND user_id = ?",
+        (custom_order_id, user["id"]),
+    )
+    if custom and custom["status"] == "rejected":
+        execute("DELETE FROM custom_orders WHERE id = ?", (custom_order_id,))
     return redirect(url_for("dashboard"))
 
 
@@ -470,7 +502,7 @@ def admin_dashboard():
         )
 
     user_details = {}
-    for item in users[:20]:
+    for item in (users[:20] if q else []):
         user_details[item["id"]] = {
             "deposits": query_all(
                 "SELECT * FROM deposits WHERE user_id = ? ORDER BY id DESC LIMIT 8",
@@ -516,9 +548,10 @@ def admin_dashboard():
             """
             SELECT cards.id, cards.country, cards.country_code, cards.network,
                    cards.price, cards.preload, cards.city, cards.masked_number,
-                   cards.expiry, cards.full_details, cards.status, cards.image_filename,
+                   cards.expiry, cards.full_details, cards.display_stock, cards.status, cards.image_filename,
                    cards.image_mime, CASE WHEN cards.image_data IS NOT NULL THEN 1 ELSE 0 END AS has_image_data,
-                   COALESCE(stock.available_stock, 0) AS available_stock
+                   COALESCE(stock.available_stock, 0) AS available_stock,
+                   COALESCE(NULLIF(cards.display_stock, 0), COALESCE(stock.available_stock, 0), 0) AS shown_stock
             FROM cards
             LEFT JOIN (
                 SELECT card_id, COUNT(*) AS available_stock
@@ -529,6 +562,7 @@ def admin_dashboard():
             ORDER BY cards.id DESC
             """
         ),
+        network_options=query_all("SELECT DISTINCT network FROM cards ORDER BY network"),
         stock_rows=query_all(
             """
             SELECT card_stock.*, cards.country, cards.network
@@ -604,7 +638,7 @@ def admin_update_credentials():
         """,
         (
             new_username,
-            generate_password_hash(new_password),
+            generate_password_hash(new_password, method=HASH_METHOD),
             credentials["id"],
         ),
     )
@@ -632,6 +666,7 @@ def admin_add_card():
             "masked_number": request.form.get("masked_number", "0000 0000 **** ****").strip(),
             "expiry": request.form.get("expiry", "01/30").strip(),
             "full_details": request.form.get("full_details", "").strip(),
+            "display_stock": int_value(request.form.get("display_stock"), 0),
             "status": request.form.get("status", "in_stock"),
             "image_filename": image_payload["image_filename"],
             "image_mime": image_payload["image_mime"],
@@ -664,7 +699,7 @@ def admin_update_card(card_id):
         """
         UPDATE cards
         SET country = ?, country_code = ?, network = ?, price = ?, preload = ?,
-            city = ?, masked_number = ?, expiry = ?, full_details = ?,
+            city = ?, masked_number = ?, expiry = ?, full_details = ?, display_stock = ?,
             status = ?, image_filename = ?, image_mime = ?, image_data = ?
         WHERE id = ?
         """,
@@ -678,6 +713,7 @@ def admin_update_card(card_id):
             request.form.get("masked_number", "").strip(),
             request.form.get("expiry", "").strip(),
             request.form.get("full_details", "").strip(),
+            int_value(request.form.get("display_stock"), 0),
             request.form.get("status", "in_stock"),
             image_filename,
             image_mime,
@@ -809,6 +845,10 @@ def admin_review_deposit(deposit_id, action):
 @admin_required
 def admin_review_order(order_id, action):
     order = query_one("SELECT * FROM orders WHERE id = ?", (order_id,))
+    if action == "delete":
+        if order:
+            execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        return redirect(url_for("admin_dashboard"))
     if not order or order["status"] != "pending":
         flash("Order is not pending.", "error")
         return redirect(url_for("admin_dashboard"))
@@ -867,10 +907,23 @@ def admin_review_order(order_id, action):
     return redirect(url_for("admin_dashboard"))
 
 
+@app.post("/admin/orders/<int:order_id>/delete")
+@admin_required
+def admin_delete_order(order_id):
+    order = query_one("SELECT id FROM orders WHERE id = ?", (order_id,))
+    if order:
+        execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    return redirect(url_for("admin_dashboard"))
+
+
 @app.post("/admin/custom-orders/<int:custom_order_id>/<action>")
 @admin_required
 def admin_review_custom_order(custom_order_id, action):
     custom = query_one("SELECT * FROM custom_orders WHERE id = ?", (custom_order_id,))
+    if action == "delete":
+        if custom:
+            execute("DELETE FROM custom_orders WHERE id = ?", (custom_order_id,))
+        return redirect(url_for("admin_dashboard"))
     if not custom or custom["status"] != "pending":
         flash("Custom order is not pending.", "error")
         return redirect(url_for("admin_dashboard"))
@@ -886,6 +939,15 @@ def admin_review_custom_order(custom_order_id, action):
             (custom_order_id,),
         )
         flash("Custom order rejected.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.post("/admin/custom-orders/<int:custom_order_id>/delete")
+@admin_required
+def admin_delete_custom_order(custom_order_id):
+    custom = query_one("SELECT id FROM custom_orders WHERE id = ?", (custom_order_id,))
+    if custom:
+        execute("DELETE FROM custom_orders WHERE id = ?", (custom_order_id,))
     return redirect(url_for("admin_dashboard"))
 
 
@@ -905,9 +967,17 @@ def api_user_status():
         "SELECT COUNT(*) AS count FROM orders WHERE user_id = ? AND status = 'pending'",
         (user["id"],),
     )
+    deposit_pending_state = query_one(
+        "SELECT COUNT(*) AS count FROM deposits WHERE user_id = ? AND status = 'pending'",
+        (user["id"],),
+    )
+    custom_state = query_one(
+        "SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM custom_orders WHERE user_id = ?",
+        (user["id"],),
+    )
     return jsonify(
         {
-            "version": f"{user['balance']}:{order_state['count']}:{order_state['max_id']}:{deposit_state['count']}:{deposit_state['max_id']}:{pending_state['count']}",
+            "version": f"{user['balance']}:{order_state['count']}:{order_state['max_id']}:{deposit_state['count']}:{deposit_state['max_id']}:{pending_state['count']}:{deposit_pending_state['count']}:{custom_state['count']}:{custom_state['max_id']}",
             "balance": str(user["balance"]),
         }
     )
@@ -921,6 +991,8 @@ def api_admin_status():
         "orders": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM orders WHERE status = 'pending'"),
         "custom": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM custom_orders WHERE status = 'pending'"),
         "users": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM users"),
+        "all_orders": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM orders"),
+        "all_deposits": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM deposits"),
     }
     return jsonify(
         {
