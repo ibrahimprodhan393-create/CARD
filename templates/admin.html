@@ -17,50 +17,48 @@
     </form>
   </header>
 
-  <section class="admin-stats">
-    <article><span>Users</span><strong>{{ stats.users }}</strong></article>
-    <article><span>Pending Deposits</span><strong>{{ stats.pending_deposits }}</strong></article>
-    <article><span>Pending Orders</span><strong>{{ stats.pending_orders }}</strong></article>
-    <article><span>Cards</span><strong>{{ stats.cards }}</strong></article>
+  <nav class="admin-tabs" aria-label="Admin sections">
+    <button class="active" type="button" data-admin-tab="overview">Overview</button>
+    <button type="button" data-admin-tab="login">Login Settings</button>
+    <button type="button" data-admin-tab="payments">Payment Methods</button>
+    <button type="button" data-admin-tab="products">Product Add</button>
+    <button type="button" data-admin-tab="stock">Stock Add</button>
+    <button type="button" data-admin-tab="deposits">Deposit Requests</button>
+    <button type="button" data-admin-tab="orders">Card Orders</button>
+    <button type="button" data-admin-tab="custom">Custom Orders</button>
+    <button type="button" data-admin-tab="users">Users</button>
+    <button type="button" data-admin-tab="helper">Helper</button>
+  </nav>
+
+  <section class="admin-section active" data-admin-section="overview">
+    <div class="admin-stats">
+      <article><span>Users</span><strong>{{ stats.users }}</strong></article>
+      <article><span>Pending Deposits</span><strong>{{ stats.pending_deposits }}</strong></article>
+      <article><span>Pending Orders</span><strong>{{ stats.pending_orders }}</strong></article>
+      <article><span>Cards</span><strong>{{ stats.cards }}</strong></article>
+    </div>
   </section>
 
-  <section class="admin-panel">
+  <section class="admin-panel admin-section" data-admin-section="login">
     <div class="panel-title">
       <h1>Admin Login Settings</h1>
-      <p>Change the default admin username and password. After saving, the old login will stop working.</p>
+      <p>Change the admin username and password. After saving, old login stops working.</p>
     </div>
-
     <form class="admin-credential-form" method="post" action="{{ url_for('admin_update_credentials') }}">
-      <label>
-        <span>Current Admin Username</span>
-        <input value="{{ admin_credentials.username if admin_credentials else 'admin' }}" disabled>
-      </label>
-      <label>
-        <span>New Admin Username</span>
-        <input name="new_username" value="{{ admin_credentials.username if admin_credentials else 'admin' }}" required>
-      </label>
-      <label>
-        <span>Current Admin Password</span>
-        <input name="current_password" type="password" placeholder="Enter current password" required>
-      </label>
-      <label>
-        <span>New Admin Password</span>
-        <input name="new_password" type="password" placeholder="Enter new password" required>
-      </label>
-      <label>
-        <span>Confirm New Password</span>
-        <input name="confirm_password" type="password" placeholder="Confirm new password" required>
-      </label>
+      <label><span>Current Admin Username</span><input value="{{ admin_credentials.username if admin_credentials else 'admin' }}" disabled></label>
+      <label><span>New Admin Username</span><input name="new_username" value="{{ admin_credentials.username if admin_credentials else 'admin' }}" required></label>
+      <label><span>Current Admin Password</span><input name="current_password" type="password" placeholder="Enter current password" required></label>
+      <label><span>New Admin Password</span><input name="new_password" type="password" placeholder="Enter new password" required></label>
+      <label><span>Confirm New Password</span><input name="confirm_password" type="password" placeholder="Confirm new password" required></label>
       <button class="gradient-button" type="submit">Save Admin Login</button>
     </form>
   </section>
 
-  <section class="admin-panel">
+  <section class="admin-panel admin-section" data-admin-section="payments">
     <div class="panel-title">
       <h1>Payment Method Adding</h1>
-      <p>Add USDT, Ethereum, Bitcoin, or any payment method shown in the user deposit modal.</p>
+      <p>Add USDT, Ethereum, Bitcoin, or any payment method shown in the deposit modal.</p>
     </div>
-
     <form class="admin-grid-form" method="post" action="{{ url_for('admin_add_address') }}">
       <input name="currency" placeholder="USDT" required>
       <input name="network" placeholder="TRC20" required>
@@ -68,23 +66,16 @@
       <input name="sort_order" type="number" placeholder="Order" value="1">
       <button class="gradient-button" type="submit">Add Address</button>
     </form>
-
     <div class="admin-list">
       {% for address in addresses %}
         <details class="admin-item">
-          <summary>
-            <strong>{{ address.currency }} ({{ address.network }})</strong>
-            <span>{{ "Enabled" if address.enabled else "Disabled" }}</span>
-          </summary>
+          <summary><strong>{{ address.currency }} ({{ address.network }})</strong><span>{{ "Enabled" if address.enabled else "Disabled" }}</span></summary>
           <form class="admin-edit-form" method="post" action="{{ url_for('admin_update_address', address_id=address.id) }}">
             <input name="currency" value="{{ address.currency }}" required>
             <input name="network" value="{{ address.network }}" required>
             <input name="address" value="{{ address.address }}" required>
             <input name="sort_order" type="number" value="{{ address.sort_order }}">
-            <label class="check-label">
-              <input type="checkbox" name="enabled" {% if address.enabled %}checked{% endif %}>
-              Enabled
-            </label>
+            <label class="check-label"><input type="checkbox" name="enabled" {% if address.enabled %}checked{% endif %}> Enabled</label>
             <button class="small-button" type="submit">Save</button>
           </form>
         </details>
@@ -92,62 +83,41 @@
     </div>
   </section>
 
-  <section class="admin-panel">
+  <section class="admin-panel admin-section" data-admin-section="products">
     <div class="panel-title">
       <h1>Product Add</h1>
-      <p>Add card products and set the private details users see only after approval.</p>
+      <p>Add card products. Stock details can be added separately in Stock Add.</p>
     </div>
-
     <form class="admin-card-form" method="post" action="{{ url_for('admin_add_card') }}" enctype="multipart/form-data">
       <input name="country" placeholder="USA" required>
       <input name="country_code" placeholder="us" required>
-      <select name="network">
-        <option>Visa</option>
-        <option>Mastercard</option>
-        <option>Amex</option>
-      </select>
+      <select name="network"><option>Visa</option><option>Mastercard</option><option>Amex</option></select>
       <input name="price" type="number" min="0" step="0.01" placeholder="Price" required>
       <input name="preload" type="number" min="0" step="0.01" placeholder="Preload" required>
       <input name="city" placeholder="City" required>
       <input name="masked_number" placeholder="5441 7074 **** ****" required>
       <input name="expiry" placeholder="03/27" required>
-      <select name="status">
-        <option value="in_stock">In Stock</option>
-        <option value="upcoming">Upcoming</option>
-        <option value="hidden">Hidden</option>
-      </select>
+      <select name="status"><option value="in_stock">In Stock</option><option value="upcoming">Upcoming</option><option value="hidden">Hidden</option></select>
       <input name="image" type="file" accept="image/*">
-      <textarea name="full_details" placeholder="Full card details after approval" required></textarea>
+      <textarea name="full_details" placeholder="Fallback details after approval"></textarea>
       <button class="gradient-button" type="submit">Add Card</button>
     </form>
-
     <div class="admin-list">
       {% for card in cards %}
         <details class="admin-item">
-          <summary>
-            <strong>#{{ card.id }} {{ card.country }} {{ card.network }}</strong>
-            <span>{{ card.status }} - {{ card.price | money }}</span>
-          </summary>
+          <summary><strong>#{{ card.id }} {{ card.country }} {{ card.network }}</strong><span>{{ card.status }} - {{ card.price | money }} - {{ card.available_stock }} stock</span></summary>
           <form class="admin-card-form edit" method="post" action="{{ url_for('admin_update_card', card_id=card.id) }}" enctype="multipart/form-data">
             <input name="country" value="{{ card.country }}" required>
             <input name="country_code" value="{{ card.country_code }}" required>
-            <select name="network">
-              {% for network in ["Visa", "Mastercard", "Amex"] %}
-                <option {% if card.network == network %}selected{% endif %}>{{ network }}</option>
-              {% endfor %}
-            </select>
+            <select name="network">{% for network in ["Visa", "Mastercard", "Amex"] %}<option {% if card.network == network %}selected{% endif %}>{{ network }}</option>{% endfor %}</select>
             <input name="price" type="number" min="0" step="0.01" value="{{ card.price }}" required>
             <input name="preload" type="number" min="0" step="0.01" value="{{ card.preload }}" required>
             <input name="city" value="{{ card.city }}" required>
             <input name="masked_number" value="{{ card.masked_number }}" required>
             <input name="expiry" value="{{ card.expiry }}" required>
-            <select name="status">
-              <option value="in_stock" {% if card.status == "in_stock" %}selected{% endif %}>In Stock</option>
-              <option value="upcoming" {% if card.status == "upcoming" %}selected{% endif %}>Upcoming</option>
-              <option value="hidden" {% if card.status == "hidden" %}selected{% endif %}>Hidden</option>
-            </select>
+            <select name="status"><option value="in_stock" {% if card.status == "in_stock" %}selected{% endif %}>In Stock</option><option value="upcoming" {% if card.status == "upcoming" %}selected{% endif %}>Upcoming</option><option value="hidden" {% if card.status == "hidden" %}selected{% endif %}>Hidden</option></select>
             <input name="image" type="file" accept="image/*">
-            <textarea name="full_details" required>{{ card.full_details }}</textarea>
+            <textarea name="full_details">{{ card.full_details }}</textarea>
             <button class="small-button" type="submit">Save Card</button>
           </form>
         </details>
@@ -155,84 +125,102 @@
     </div>
   </section>
 
-  <section class="admin-panel">
+  <section class="admin-panel admin-section" data-admin-section="stock">
     <div class="panel-title">
-      <h1>Deposit Requests</h1>
-      <p>Approve payment, then the user balance is credited.</p>
+      <h1>Card Stock Add</h1>
+      <p>Add ready stock details. Separate multiple stock items with a line containing only <code>---</code>.</p>
     </div>
+    <form class="admin-card-form" method="post" action="{{ url_for('admin_add_stock') }}">
+      <select name="card_id" required>
+        {% for card in cards %}
+          <option value="{{ card.id }}">#{{ card.id }} {{ card.country }} {{ card.network }} - {{ card.available_stock }} ready</option>
+        {% endfor %}
+      </select>
+      <textarea name="details" placeholder="Stock details item 1&#10;---&#10;Stock details item 2" required></textarea>
+      <button class="gradient-button" type="submit">Add Stock</button>
+    </form>
+    <div class="admin-list">
+      {% for stock in stock_rows %}
+        <article class="admin-row">
+          <div><strong>#{{ stock.id }} {{ stock.country }} {{ stock.network }}</strong><span>{{ stock.status }}</span></div>
+        </article>
+      {% endfor %}
+    </div>
+  </section>
 
+  <section class="admin-panel admin-section" data-admin-section="deposits">
+    <div class="panel-title"><h1>Deposit Requests</h1><p>Approve payment, then the user balance is credited.</p></div>
     <div class="admin-list">
       {% for deposit in deposits %}
         <article class="admin-row">
-          <div>
-            <strong>#{{ deposit.id }} {{ deposit.profile_name or deposit.username }} - {{ deposit.currency }}</strong>
-            <span>{{ deposit.amount | money }} - {{ deposit.status }}</span>
-            <code>{{ deposit.txid }}</code>
-          </div>
+          <div><strong>#{{ deposit.id }} {{ deposit.profile_name or deposit.username }} ({{ deposit.public_id }}) - {{ deposit.currency }}</strong><span>{{ deposit.amount | money }} - {{ deposit.status }}</span><code>{{ deposit.txid }}</code></div>
           {% if deposit.status == "pending" %}
-            <form method="post" action="{{ url_for('admin_review_deposit', deposit_id=deposit.id, action='approve') }}">
-              <input name="amount" type="number" min="0" step="0.01" value="{{ deposit.amount }}">
-              <button class="small-button" type="submit">Approve</button>
-            </form>
-            <form method="post" action="{{ url_for('admin_review_deposit', deposit_id=deposit.id, action='reject') }}">
-              <button class="danger-button" type="submit">Reject</button>
-            </form>
+            <form method="post" action="{{ url_for('admin_review_deposit', deposit_id=deposit.id, action='approve') }}"><input name="amount" type="number" min="0" step="0.01" value="{{ deposit.amount }}"><button class="small-button" type="submit">Approve</button></form>
+            <form method="post" action="{{ url_for('admin_review_deposit', deposit_id=deposit.id, action='reject') }}"><button class="danger-button" type="submit">Reject</button></form>
           {% endif %}
         </article>
       {% endfor %}
     </div>
   </section>
 
-  <section class="admin-panel">
-    <div class="panel-title">
-      <h1>Card Orders</h1>
-      <p>Approve an order to reveal the full card details to the user.</p>
-    </div>
-
+  <section class="admin-panel admin-section" data-admin-section="orders">
+    <div class="panel-title"><h1>Card Orders</h1><p>Approve pending orders or see auto-approved purchases.</p></div>
     <div class="admin-list">
       {% for order in orders %}
         <article class="admin-row">
-          <div>
-            <strong>#{{ order.id }} {{ order.profile_name or order.username }} - {{ order.country }} {{ order.network }}</strong>
-            <span>{{ order.price | money }} - {{ order.status }}</span>
-          </div>
+          <div><strong>#{{ order.id }} {{ order.profile_name or order.username }} ({{ order.public_id }}) - {{ order.country }} {{ order.network }}</strong><span>{{ order.price | money }} - Qty {{ order.quantity }} - {{ order.status }}</span></div>
           {% if order.status == "pending" %}
-            <form method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='approve') }}">
-              <button class="small-button" type="submit">Approve</button>
-            </form>
-            <form method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='reject') }}">
-              <button class="danger-button" type="submit">Reject</button>
-            </form>
+            <form class="order-approve-form" method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='approve') }}"><textarea name="delivered_details" placeholder="Optional delivered details"></textarea><button class="small-button" type="submit">Approve</button></form>
+            <form method="post" action="{{ url_for('admin_review_order', order_id=order.id, action='reject') }}"><button class="danger-button" type="submit">Reject</button></form>
           {% endif %}
         </article>
       {% endfor %}
     </div>
   </section>
 
-  <section class="admin-panel">
-    <div class="panel-title">
-      <h1>Users</h1>
-      <p>Usernames, balances, and created accounts are stored in the database.</p>
-    </div>
-
-    <div class="admin-table">
-      <div class="admin-table-head">
-        <span>ID</span>
-        <span>Username</span>
-        <span>Profile</span>
-        <span>Balance</span>
-        <span>Created</span>
-      </div>
-      {% for user in users %}
-        <div class="admin-table-row">
-          <span>{{ user.id }}</span>
-          <span>{{ user.username }}</span>
-          <span>{{ user.profile_name or user.username }}</span>
-          <span>{{ user.balance | money }}</span>
-          <span>{{ user.created_at }}</span>
-        </div>
+  <section class="admin-panel admin-section" data-admin-section="custom">
+    <div class="panel-title"><h1>Custom Orders</h1><p>Review custom card requests from users.</p></div>
+    <div class="admin-list">
+      {% for custom in custom_orders %}
+        <article class="admin-row">
+          <div><strong>#{{ custom.id }} {{ custom.profile_name or custom.username }} ({{ custom.public_id }}) - {{ custom.card_type }}</strong><span>{{ custom.country }} - Qty {{ custom.quantity }} - {{ custom.budget | money }} - {{ custom.status }}</span><p>{{ custom.notes }}</p></div>
+          {% if custom.status == "pending" %}
+            <form method="post" action="{{ url_for('admin_review_custom_order', custom_order_id=custom.id, action='approve') }}"><button class="small-button" type="submit">Approve</button></form>
+            <form method="post" action="{{ url_for('admin_review_custom_order', custom_order_id=custom.id, action='reject') }}"><button class="danger-button" type="submit">Reject</button></form>
+          {% endif %}
+        </article>
       {% endfor %}
     </div>
+  </section>
+
+  <section class="admin-panel admin-section" data-admin-section="users">
+    <div class="panel-title"><h1>Users</h1><p>Search by unique ID, username, or profile name. Balances are shown here.</p></div>
+    <form class="admin-search-form" method="get" action="{{ url_for('admin_dashboard') }}">
+      <input name="q" value="{{ search_query }}" placeholder="Search user ID / username / profile">
+      <button class="small-button" type="submit">Search</button>
+    </form>
+    <div class="admin-table">
+      <div class="admin-table-head"><span>ID</span><span>Unique ID</span><span>Username</span><span>Profile</span><span>Balance</span><span>Created</span></div>
+      {% for user in users %}
+        <details class="admin-user-detail">
+          <summary><span>{{ user.id }}</span><span>{{ user.public_id }}</span><span>{{ user.username }}</span><span>{{ user.profile_name or user.username }}</span><span>{{ user.balance | money }}</span><span>{{ user.created_at }}</span></summary>
+          {% set details = user_details.get(user.id) %}
+          <div class="user-detail-grid">
+            <article><h3>Deposits</h3>{% for deposit in details.deposits %}<p>{{ deposit.currency }} {{ deposit.amount | money }} - {{ deposit.status }}</p>{% endfor %}</article>
+            <article><h3>Orders</h3>{% for order in details.orders %}<p>{{ order.country }} {{ order.network }} x{{ order.quantity }} - {{ order.status }}</p>{% endfor %}</article>
+            <article><h3>Custom</h3>{% for custom in details.custom_orders %}<p>{{ custom.card_type }} x{{ custom.quantity }} - {{ custom.status }}</p>{% endfor %}</article>
+          </div>
+        </details>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="admin-panel admin-section" data-admin-section="helper">
+    <div class="panel-title"><h1>Helper Settings</h1><p>This email appears in the user Help section.</p></div>
+    <form class="admin-grid-form" method="post" action="{{ url_for('admin_update_settings') }}">
+      <input name="helper_email" type="email" value="{{ helper_email }}" placeholder="support@example.com" required>
+      <button class="gradient-button" type="submit">Save Helper Email</button>
+    </form>
   </section>
 </main>
 {% endblock %}

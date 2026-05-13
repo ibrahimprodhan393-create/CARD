@@ -1,11 +1,14 @@
 import os
 import base64
+import uuid
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from flask import (
     Flask,
+    Response,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -98,7 +101,7 @@ def admin_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("admin"):
             flash("Admin sign in required.", "error")
-            return redirect(url_for("login", mode="admin"))
+            return redirect(url_for("login"))
         return view(*args, **kwargs)
 
     return wrapped
@@ -117,11 +120,46 @@ def get_admin_credentials():
     return query_one("SELECT * FROM admin_credentials ORDER BY id LIMIT 1")
 
 
+def get_setting(key, default=""):
+    row = query_one("SELECT value FROM site_settings WHERE key = ?", (key,))
+    return row["value"] if row else default
+
+
+def _sql(statement):
+    return statement.replace("?", "%s") if using_postgres() else statement
+
+
+def set_setting(key, value):
+    if query_one("SELECT key FROM site_settings WHERE key = ?", (key,)):
+        execute("UPDATE site_settings SET value = ? WHERE key = ?", (value, key))
+    else:
+        execute("INSERT INTO site_settings (key, value) VALUES (?, ?)", (key, value))
+
+
+def generate_public_id():
+    while True:
+        public_id = "RM" + uuid.uuid4().hex[:8].upper()
+        if not query_one("SELECT id FROM users WHERE public_id = ?", (public_id,)):
+            return public_id
+
+
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
+
+        credentials = get_admin_credentials()
+        if (
+            credentials
+            and username.lower() == credentials["username"].lower()
+            and check_password_hash(credentials["password_hash"], password)
+        ):
+            session.clear()
+            session["admin"] = True
+            flash("Admin signed in.", "success")
+            return redirect(url_for("admin_dashboard"))
+
         user = query_one("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
         if user and check_password_hash(user["password_hash"], password):
             session.clear()
@@ -152,6 +190,7 @@ def register():
         "users",
         {
             "username": username,
+            "public_id": generate_public_id(),
             "profile_name": profile_name,
             "password_hash": generate_password_hash(password),
             "balance": 0,
@@ -175,7 +214,22 @@ def logout():
 def dashboard():
     user = current_user()
     cards = query_all(
-        "SELECT * FROM cards WHERE status != 'hidden' ORDER BY id DESC"
+        """
+        SELECT cards.id, cards.country, cards.country_code, cards.network,
+               cards.price, cards.preload, cards.city, cards.masked_number,
+               cards.expiry, cards.status, cards.image_filename, cards.image_mime,
+               CASE WHEN cards.image_data IS NOT NULL THEN 1 ELSE 0 END AS has_image_data,
+               COALESCE(stock.available_stock, 0) AS available_stock
+        FROM cards
+        LEFT JOIN (
+            SELECT card_id, COUNT(*) AS available_stock
+            FROM card_stock
+            WHERE status = 'available'
+            GROUP BY card_id
+        ) AS stock ON stock.card_id = cards.id
+        WHERE cards.status != 'hidden'
+        ORDER BY cards.id DESC
+        """
     )
     enabled_filter = "enabled = TRUE" if using_postgres() else "enabled = 1"
     addresses = query_all(
@@ -184,7 +238,8 @@ def dashboard():
     orders = query_all(
         """
         SELECT orders.*, cards.country, cards.country_code, cards.network,
-               cards.masked_number, cards.expiry, cards.full_details
+               cards.masked_number, cards.expiry,
+               COALESCE(orders.delivered_details, cards.full_details) AS view_details
         FROM orders
         JOIN cards ON cards.id = orders.card_id
         WHERE orders.user_id = ?
@@ -193,7 +248,11 @@ def dashboard():
         (user["id"],),
     )
     deposits = query_all(
-        "SELECT * FROM deposits WHERE user_id = ? ORDER BY id DESC LIMIT 8",
+        "SELECT * FROM deposits WHERE user_id = ? ORDER BY id DESC LIMIT 20",
+        (user["id"],),
+    )
+    custom_orders = query_all(
+        "SELECT * FROM custom_orders WHERE user_id = ? ORDER BY id DESC LIMIT 20",
         (user["id"],),
     )
     latest_order = orders[0] if orders else None
@@ -205,8 +264,24 @@ def dashboard():
         addresses=addresses,
         orders=orders,
         deposits=deposits,
+        custom_orders=custom_orders,
         latest_order=latest_order,
         latest_deposit=latest_deposit,
+        helper_email=get_setting("helper_email", "support@example.com"),
+    )
+
+
+@app.get("/card-image/<int:card_id>")
+def card_image(card_id):
+    card = query_one(
+        "SELECT image_mime, image_data FROM cards WHERE id = ? AND image_data IS NOT NULL",
+        (card_id,),
+    )
+    if not card:
+        return ("", 404)
+    return Response(
+        base64.b64decode(card["image_data"]),
+        mimetype=card["image_mime"] or "image/png",
     )
 
 
@@ -248,31 +323,87 @@ def purchase(card_id):
         flash("This card is not available right now.", "error")
         return redirect(url_for("dashboard"))
 
+    try:
+        quantity = max(1, min(20, int(request.form.get("quantity") or 1)))
+    except ValueError:
+        quantity = 1
     price = money_value(card["price"])
+    total = price * quantity
     balance = money_value(user["balance"])
-    if balance < price:
+    if balance < total:
         flash("Insufficient balance. Please deposit first.", "error")
         return redirect(url_for("dashboard"))
+
+    stock_items = query_all(
+        "SELECT id, details FROM card_stock WHERE card_id = ? AND status = 'available' ORDER BY id LIMIT ?",
+        (card_id, quantity),
+    )
+    auto_approve = len(stock_items) >= quantity
+    delivered_details = "\n\n---\n\n".join(item["details"] for item in stock_items) if auto_approve else None
+    status = "approved" if auto_approve else "pending"
 
     with connection() as conn:
         cur = conn.cursor()
         placeholder = "%s" if using_postgres() else "?"
         cur.execute(
             f"UPDATE users SET balance = balance - {placeholder} WHERE id = {placeholder}",
-            (str(price), user["id"]),
+            (str(total), user["id"]),
         )
         if using_postgres():
             cur.execute(
-                "INSERT INTO orders (user_id, card_id, price, status) VALUES (%s, %s, %s, %s)",
-                (user["id"], card["id"], str(price), "pending"),
+                """
+                INSERT INTO orders (user_id, card_id, price, quantity, delivered_details, status)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (user["id"], card["id"], str(total), quantity, delivered_details, status),
             )
+            order_id = cur.fetchone()["id"]
         else:
             cur.execute(
-                "INSERT INTO orders (user_id, card_id, price, status) VALUES (?, ?, ?, ?)",
-                (user["id"], card["id"], str(price), "pending"),
+                """
+                INSERT INTO orders (user_id, card_id, price, quantity, delivered_details, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user["id"], card["id"], str(total), quantity, delivered_details, status),
             )
+            order_id = cur.lastrowid
 
-    flash("Purchase request sent. Admin approval will unlock the card details.", "success")
+        if auto_approve:
+            for item in stock_items:
+                cur.execute(
+                    _sql("UPDATE card_stock SET status = ?, order_id = ?, sold_at = CURRENT_TIMESTAMP WHERE id = ?"),
+                    ("sold", order_id, item["id"]),
+                )
+
+    if auto_approve:
+        flash("Purchase complete. Card details are now in My Cards.", "success")
+    else:
+        flash("Purchase request sent. Admin approval will unlock the card details.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/custom-order")
+@login_required
+def custom_order():
+    user = current_user()
+    try:
+        quantity = max(1, min(100, int(request.form.get("quantity") or 1)))
+    except ValueError:
+        quantity = 1
+    insert(
+        "custom_orders",
+        {
+            "user_id": user["id"],
+            "card_type": request.form.get("card_type", "Visa").strip(),
+            "country": request.form.get("country", "").strip(),
+            "quantity": quantity,
+            "budget": str(money_value(request.form.get("budget", "0"))),
+            "notes": request.form.get("notes", "").strip(),
+            "status": "pending",
+        },
+    )
+    flash("Custom order submitted. Admin will review it.", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -292,20 +423,76 @@ def admin_login():
             flash("Admin signed in.", "success")
             return redirect(url_for("admin_dashboard"))
         flash("Invalid admin credentials.", "error")
-        return redirect(url_for("login", mode="admin"))
-    return redirect(url_for("login", mode="admin"))
+        return redirect(url_for("login"))
+    return redirect(url_for("login"))
 
 
 @app.post("/admin/logout")
 def admin_logout():
     session.clear()
     flash("Admin signed out.", "success")
-    return redirect(url_for("login", mode="admin"))
+    return redirect(url_for("login"))
+
+
+@app.get("/admin-panel")
+@app.get("/admin_panel")
+@app.get("/admin.html")
+def admin_alias():
+    return redirect(url_for("admin_dashboard"))
 
 
 @app.get("/admin")
 @admin_required
 def admin_dashboard():
+    q = request.args.get("q", "").strip()
+    if q:
+        like = f"%{q.lower()}%"
+        users = query_all(
+            """
+            SELECT id, public_id, username, profile_name, balance, created_at
+            FROM users
+            WHERE LOWER(username) LIKE ?
+               OR LOWER(COALESCE(profile_name, '')) LIKE ?
+               OR LOWER(COALESCE(public_id, '')) LIKE ?
+            ORDER BY id DESC
+            LIMIT 50
+            """,
+            (like, like, like),
+        )
+    else:
+        users = query_all(
+            """
+            SELECT id, public_id, username, profile_name, balance, created_at
+            FROM users
+            ORDER BY id DESC
+            LIMIT 100
+            """
+        )
+
+    user_details = {}
+    for item in users[:20]:
+        user_details[item["id"]] = {
+            "deposits": query_all(
+                "SELECT * FROM deposits WHERE user_id = ? ORDER BY id DESC LIMIT 8",
+                (item["id"],),
+            ),
+            "orders": query_all(
+                """
+                SELECT orders.*, cards.country, cards.network
+                FROM orders
+                JOIN cards ON cards.id = orders.card_id
+                WHERE orders.user_id = ?
+                ORDER BY orders.id DESC
+                LIMIT 8
+                """,
+                (item["id"],),
+            ),
+            "custom_orders": query_all(
+                "SELECT * FROM custom_orders WHERE user_id = ? ORDER BY id DESC LIMIT 8",
+                (item["id"],),
+            ),
+        }
+
     stats = {
         "users": query_one("SELECT COUNT(*) AS total FROM users")["total"],
         "pending_deposits": query_one(
@@ -322,12 +509,39 @@ def admin_dashboard():
         "admin.html",
         stats=stats,
         admin_credentials=get_admin_credentials(),
-        users=query_all("SELECT id, username, profile_name, balance, created_at FROM users ORDER BY id DESC"),
-        cards=query_all("SELECT * FROM cards ORDER BY id DESC"),
+        users=users,
+        user_details=user_details,
+        search_query=q,
+        cards=query_all(
+            """
+            SELECT cards.id, cards.country, cards.country_code, cards.network,
+                   cards.price, cards.preload, cards.city, cards.masked_number,
+                   cards.expiry, cards.full_details, cards.status, cards.image_filename,
+                   cards.image_mime, CASE WHEN cards.image_data IS NOT NULL THEN 1 ELSE 0 END AS has_image_data,
+                   COALESCE(stock.available_stock, 0) AS available_stock
+            FROM cards
+            LEFT JOIN (
+                SELECT card_id, COUNT(*) AS available_stock
+                FROM card_stock
+                WHERE status = 'available'
+                GROUP BY card_id
+            ) AS stock ON stock.card_id = cards.id
+            ORDER BY cards.id DESC
+            """
+        ),
+        stock_rows=query_all(
+            """
+            SELECT card_stock.*, cards.country, cards.network
+            FROM card_stock
+            JOIN cards ON cards.id = card_stock.card_id
+            ORDER BY card_stock.id DESC
+            LIMIT 80
+            """
+        ),
         addresses=query_all("SELECT * FROM crypto_addresses ORDER BY sort_order, id"),
         deposits=query_all(
             """
-            SELECT deposits.*, users.username, users.profile_name
+            SELECT deposits.*, users.username, users.profile_name, users.public_id
             FROM deposits
             JOIN users ON users.id = deposits.user_id
             ORDER BY deposits.id DESC
@@ -336,7 +550,8 @@ def admin_dashboard():
         ),
         orders=query_all(
             """
-            SELECT orders.*, users.username, users.profile_name, cards.country, cards.network, cards.full_details
+            SELECT orders.*, users.username, users.profile_name, users.public_id,
+                   cards.country, cards.network, cards.full_details
             FROM orders
             JOIN users ON users.id = orders.user_id
             JOIN cards ON cards.id = orders.card_id
@@ -344,6 +559,16 @@ def admin_dashboard():
             LIMIT 50
             """
         ),
+        custom_orders=query_all(
+            """
+            SELECT custom_orders.*, users.username, users.profile_name, users.public_id
+            FROM custom_orders
+            JOIN users ON users.id = custom_orders.user_id
+            ORDER BY custom_orders.id DESC
+            LIMIT 50
+            """
+        ),
+        helper_email=get_setting("helper_email", "support@example.com"),
     )
 
 
@@ -464,6 +689,32 @@ def admin_update_card(card_id):
     return redirect(url_for("admin_dashboard"))
 
 
+@app.post("/admin/stock")
+@admin_required
+def admin_add_stock():
+    card_id = int(request.form.get("card_id") or 0)
+    raw_details = request.form.get("details", "").strip()
+    if not card_id or not raw_details:
+        flash("Select a card and paste stock details.", "error")
+        return redirect(url_for("admin_dashboard"))
+
+    items = [item.strip() for item in raw_details.split("\n---\n") if item.strip()]
+    if not items:
+        items = [raw_details]
+    for details in items:
+        insert(
+            "card_stock",
+            {
+                "card_id": card_id,
+                "details": details,
+                "status": "available",
+                "order_id": None,
+            },
+        )
+    flash(f"{len(items)} stock item added.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
 @app.post("/admin/addresses")
 @admin_required
 def admin_add_address():
@@ -503,6 +754,14 @@ def admin_update_address(address_id):
         ),
     )
     flash("Deposit address updated.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.post("/admin/settings")
+@admin_required
+def admin_update_settings():
+    set_setting("helper_email", request.form.get("helper_email", "").strip())
+    flash("Helper email updated.", "success")
     return redirect(url_for("admin_dashboard"))
 
 
@@ -555,10 +814,33 @@ def admin_review_order(order_id, action):
         return redirect(url_for("admin_dashboard"))
 
     if action == "approve":
-        execute(
-            "UPDATE orders SET status = 'approved', approved_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (order_id,),
+        manual_details = request.form.get("delivered_details", "").strip()
+        stock_items = query_all(
+            "SELECT id, details FROM card_stock WHERE card_id = ? AND status = 'available' ORDER BY id LIMIT ?",
+            (order["card_id"], order.get("quantity") or 1),
         )
+        if manual_details:
+            delivered_details = manual_details
+        elif len(stock_items) >= (order.get("quantity") or 1):
+            delivered_details = "\n\n---\n\n".join(item["details"] for item in stock_items)
+        else:
+            card = query_one("SELECT full_details FROM cards WHERE id = ?", (order["card_id"],))
+            delivered_details = card["full_details"] if card else ""
+
+        execute(
+            """
+            UPDATE orders
+            SET status = 'approved', delivered_details = ?, approved_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (delivered_details, order_id),
+        )
+        if stock_items and not manual_details:
+            for item in stock_items[: (order.get("quantity") or 1)]:
+                execute(
+                    "UPDATE card_stock SET status = 'sold', order_id = ?, sold_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (order_id, item["id"]),
+                )
         flash("Order approved. User can now see card details.", "success")
     elif action == "reject":
         with connection() as conn:
@@ -583,6 +865,70 @@ def admin_review_order(order_id, action):
                 )
         flash("Order rejected and balance refunded.", "success")
     return redirect(url_for("admin_dashboard"))
+
+
+@app.post("/admin/custom-orders/<int:custom_order_id>/<action>")
+@admin_required
+def admin_review_custom_order(custom_order_id, action):
+    custom = query_one("SELECT * FROM custom_orders WHERE id = ?", (custom_order_id,))
+    if not custom or custom["status"] != "pending":
+        flash("Custom order is not pending.", "error")
+        return redirect(url_for("admin_dashboard"))
+    if action == "approve":
+        execute(
+            "UPDATE custom_orders SET status = 'approved', reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (custom_order_id,),
+        )
+        flash("Custom order approved.", "success")
+    elif action == "reject":
+        execute(
+            "UPDATE custom_orders SET status = 'rejected', reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (custom_order_id,),
+        )
+        flash("Custom order rejected.", "success")
+    return redirect(url_for("admin_dashboard"))
+
+
+@app.get("/api/user/status")
+@login_required
+def api_user_status():
+    user = current_user()
+    order_state = query_one(
+        "SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM orders WHERE user_id = ?",
+        (user["id"],),
+    )
+    deposit_state = query_one(
+        "SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM deposits WHERE user_id = ?",
+        (user["id"],),
+    )
+    pending_state = query_one(
+        "SELECT COUNT(*) AS count FROM orders WHERE user_id = ? AND status = 'pending'",
+        (user["id"],),
+    )
+    return jsonify(
+        {
+            "version": f"{user['balance']}:{order_state['count']}:{order_state['max_id']}:{deposit_state['count']}:{deposit_state['max_id']}:{pending_state['count']}",
+            "balance": str(user["balance"]),
+        }
+    )
+
+
+@app.get("/api/admin/status")
+@admin_required
+def api_admin_status():
+    state = {
+        "deposits": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM deposits WHERE status = 'pending'"),
+        "orders": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM orders WHERE status = 'pending'"),
+        "custom": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM custom_orders WHERE status = 'pending'"),
+        "users": query_one("SELECT COUNT(*) AS count, COALESCE(MAX(id), 0) AS max_id FROM users"),
+    }
+    return jsonify(
+        {
+            "version": ":".join(
+                f"{key}-{value['count']}-{value['max_id']}" for key, value in state.items()
+            )
+        }
+    )
 
 
 if __name__ == "__main__":

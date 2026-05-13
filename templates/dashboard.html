@@ -12,16 +12,12 @@
       <div>
         <strong>Russian Market</strong>
         <small>{{ user.profile_name or user.username }}</small>
+        <small class="user-public-id">{{ user.public_id }}</small>
       </div>
     </div>
 
     <div class="action-row">
-      <button class="mode-button" type="button" data-theme-toggle>
-        <span class="mode-dot"></span>
-        dark
-      </button>
       <span class="balance-pill">{{ user.balance | money }}</span>
-      <a class="history-pill" href="#historySection">History</a>
       <button class="deposit-pill" type="button" data-open-modal="depositModal">
         <span class="mini-card-icon"></span>
         Deposit
@@ -32,7 +28,16 @@
     </div>
   </header>
 
-  <section class="section-block history-overview" id="historySection">
+  <nav class="app-tabs" aria-label="User sections">
+    <button class="active" type="button" data-section-tab="cards">Cards</button>
+    <button type="button" data-section-tab="cart">Cart <span data-cart-count>0</span></button>
+    <button type="button" data-section-tab="mycards">My Cards</button>
+    <button type="button" data-section-tab="deposits">Deposit History</button>
+    <button type="button" data-section-tab="custom">Custom Order</button>
+    <button type="button" data-section-tab="help">Help</button>
+  </nav>
+
+  <section class="section-block history-overview">
     <div class="section-title">
       <span class="history-icon"></span>
       <h1>History</h1>
@@ -62,7 +67,7 @@
     </div>
   </section>
 
-  <section class="section-block">
+  <section class="section-block user-section active" data-user-section="cards">
     <div class="section-title">
       <span class="shop-icon"></span>
       <h1>Card Shop</h1>
@@ -72,11 +77,30 @@
       In Stock ({{ cards | selectattr("status", "equalto", "in_stock") | list | length }} cards)
     </p>
 
+    <div class="card-tools">
+      <input type="search" placeholder="Search country, city, network" data-card-search>
+      <div class="network-tabs">
+        <button class="active" type="button" data-network-filter="all">All</button>
+        <button type="button" data-network-filter="visa">Visa</button>
+        <button type="button" data-network-filter="mastercard">Mastercard</button>
+        <button type="button" data-network-filter="amex">Amex</button>
+      </div>
+    </div>
+
     <div class="card-list">
       {% for card in cards %}
         {% set available = card.status == "in_stock" %}
         {% set can_buy = available and (user.balance | float) >= (card.price | float) %}
-        <article class="market-card">
+        <article
+          class="market-card"
+          data-card
+          data-card-id="{{ card.id }}"
+          data-title="{{ card.country }} {{ card.city }} {{ card.network }}"
+          data-network="{{ card.network | network_slug }}"
+          data-network-name="{{ card.network }}"
+          data-country="{{ card.country }}"
+          data-price="{{ card.price }}"
+        >
           <span class="stock-pill {{ 'is-muted' if not available else '' }}">
             {% if card.status == "upcoming" %}Upcoming{% elif available %}In Stock{% else %}Hidden{% endif %}
           </span>
@@ -91,8 +115,8 @@
             {{ card.network }}
           </div>
 
-          {% if card.image_data %}
-            <img class="card-art" src="data:{{ card.image_mime }};base64,{{ card.image_data }}" alt="{{ card.country }} card">
+          {% if card.has_image_data %}
+            <img class="card-art" loading="lazy" src="{{ url_for('card_image', card_id=card.id) }}" alt="{{ card.country }} card">
           {% elif card.image_filename %}
             <img class="card-art" src="{{ url_for('static', filename='uploads/' ~ card.image_filename) }}" alt="{{ card.country }} card">
           {% endif %}
@@ -114,16 +138,23 @@
             <span>Exp: {{ card.expiry }}</span>
           </div>
 
-          <form method="post" action="{{ url_for('purchase', card_id=card.id) }}">
+          <div class="stock-count">{{ card.available_stock }} ready stock</div>
+
+          <form class="add-cart-form">
+            <label class="qty-label">
+              <span>Qty</span>
+              <input type="number" min="1" max="20" value="1" data-card-qty>
+            </label>
             <button
               class="purchase-button {{ '' if can_buy else 'disabled' }}"
-              type="submit"
+              type="button"
+              data-add-cart
               {% if not can_buy %}disabled{% endif %}
             >
               {% if not available %}
                 Not available
               {% elif can_buy %}
-                Purchase
+                Add Cart
               {% else %}
                 Insufficient
               {% endif %}
@@ -134,7 +165,16 @@
     </div>
   </section>
 
-  <section class="section-block compact-section">
+  <section class="section-block compact-section user-section" data-user-section="cart">
+    <div class="section-title">
+      <span class="owned-icon"></span>
+      <h2>Cart</h2>
+    </div>
+    <div class="cart-list" data-cart-list></div>
+    <p class="empty-text" data-cart-empty>Your cart is empty.</p>
+  </section>
+
+  <section class="section-block compact-section user-section" data-user-section="mycards">
     <div class="section-title">
       <span class="owned-icon"></span>
       <h2>My Cards</h2>
@@ -149,7 +189,7 @@
               <span>{{ order.price | money }} - {{ order.status }}</span>
             </div>
             {% if order.status == "approved" %}
-              <pre>{{ order.full_details }}</pre>
+              <pre>{{ order.view_details }}</pre>
             {% else %}
               <p>Waiting for admin approval.</p>
             {% endif %}
@@ -161,7 +201,7 @@
     {% endif %}
   </section>
 
-  <section class="section-block compact-section">
+  <section class="section-block compact-section user-section" data-user-section="deposits">
     <div class="section-title">
       <span class="deposit-history-icon"></span>
       <h2>Deposit History</h2>
@@ -179,6 +219,47 @@
     {% else %}
       <p class="empty-text">No deposit submitted yet.</p>
     {% endif %}
+  </section>
+
+  <section class="section-block compact-section user-section" data-user-section="custom">
+    <div class="section-title">
+      <span class="shop-icon"></span>
+      <h2>Custom Card Order</h2>
+    </div>
+    <form class="custom-order-form" method="post" action="{{ url_for('custom_order') }}">
+      <select name="card_type">
+        <option>Visa</option>
+        <option>Mastercard</option>
+        <option>Amex</option>
+      </select>
+      <input name="country" placeholder="Country / region">
+      <input name="quantity" type="number" min="1" max="100" value="1">
+      <input name="budget" type="number" min="0" step="0.01" placeholder="Budget">
+      <textarea name="notes" placeholder="Details you need"></textarea>
+      <button class="gradient-button" type="submit">Submit Custom Order</button>
+    </form>
+
+    {% if custom_orders %}
+      <div class="history-list">
+        {% for custom in custom_orders %}
+          <article class="history-item slim">
+            <strong>{{ custom.card_type }} x{{ custom.quantity }} - {{ custom.status }}</strong>
+            <span>{{ custom.country }} - {{ custom.budget | money }}</span>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="section-block compact-section user-section" data-user-section="help">
+    <div class="section-title">
+      <span class="deposit-history-icon"></span>
+      <h2>Help</h2>
+    </div>
+    <article class="help-card">
+      <span>Support Email</span>
+      <a href="mailto:{{ helper_email }}">{{ helper_email }}</a>
+    </article>
   </section>
 </main>
 

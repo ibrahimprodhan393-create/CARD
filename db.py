@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 
 from werkzeug.security import generate_password_hash
@@ -104,6 +105,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
+                    public_id TEXT UNIQUE,
                     profile_name TEXT,
                     password_hash TEXT NOT NULL,
                     balance NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -158,9 +160,36 @@ def init_db():
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE RESTRICT,
                     price NUMERIC(12,2) NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    delivered_details TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     approved_at TIMESTAMPTZ
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS card_stock (
+                    id SERIAL PRIMARY KEY,
+                    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                    details TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'available',
+                    order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    sold_at TIMESTAMPTZ
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS custom_orders (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    card_type TEXT NOT NULL,
+                    country TEXT,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    budget NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    notes TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at TIMESTAMPTZ
                 )
                 """,
                 """
@@ -178,6 +207,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL UNIQUE,
+                    public_id TEXT UNIQUE,
                     profile_name TEXT,
                     password_hash TEXT NOT NULL,
                     balance REAL NOT NULL DEFAULT 0,
@@ -233,11 +263,41 @@ def init_db():
                     user_id INTEGER NOT NULL,
                     card_id INTEGER NOT NULL,
                     price REAL NOT NULL,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    delivered_details TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     approved_at TEXT,
                     FOREIGN KEY(user_id) REFERENCES users(id),
                     FOREIGN KEY(card_id) REFERENCES cards(id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS card_stock (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    card_id INTEGER NOT NULL,
+                    details TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'available',
+                    order_id INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    sold_at TEXT,
+                    FOREIGN KEY(card_id) REFERENCES cards(id),
+                    FOREIGN KEY(order_id) REFERENCES orders(id)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS custom_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    card_type TEXT NOT NULL,
+                    country TEXT,
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    budget REAL NOT NULL DEFAULT 0,
+                    notes TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at TEXT,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
                 )
                 """,
                 """
@@ -248,18 +308,31 @@ def init_db():
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS site_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+                """,
             ]
 
         for statement in statements:
             cur.execute(statement)
 
-    ensure_profile_name_column()
+    ensure_user_columns()
     ensure_card_image_columns()
+    ensure_order_columns()
+    ensure_site_settings_table()
+    ensure_indexes()
     seed_admin_credentials()
     seed_defaults()
 
 
-def ensure_profile_name_column():
+def _public_id():
+    return "RM" + uuid.uuid4().hex[:8].upper()
+
+
+def ensure_user_columns():
     with connection() as conn:
         cur = conn.cursor()
         if using_postgres():
@@ -267,19 +340,28 @@ def ensure_profile_name_column():
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'users' AND column_name = 'profile_name'
+                WHERE table_name = 'users'
                 """
             )
-            has_column = cur.fetchone() is not None
-            if not has_column:
-                cur.execute("ALTER TABLE users ADD COLUMN profile_name TEXT")
-                cur.execute("UPDATE users SET profile_name = username WHERE profile_name IS NULL")
-        else:
-            cur.execute("PRAGMA table_info(users)")
-            columns = [row["name"] for row in cur.fetchall()]
+            columns = {row["column_name"] for row in cur.fetchall()}
             if "profile_name" not in columns:
                 cur.execute("ALTER TABLE users ADD COLUMN profile_name TEXT")
                 cur.execute("UPDATE users SET profile_name = username WHERE profile_name IS NULL")
+            if "public_id" not in columns:
+                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT UNIQUE")
+        else:
+            cur.execute("PRAGMA table_info(users)")
+            columns = {row["name"] for row in cur.fetchall()}
+            if "profile_name" not in columns:
+                cur.execute("ALTER TABLE users ADD COLUMN profile_name TEXT")
+                cur.execute("UPDATE users SET profile_name = username WHERE profile_name IS NULL")
+            if "public_id" not in columns:
+                cur.execute("ALTER TABLE users ADD COLUMN public_id TEXT UNIQUE")
+
+        cur.execute("SELECT id FROM users WHERE public_id IS NULL OR public_id = ''")
+        missing = cur.fetchall()
+        for row in missing:
+            cur.execute(_translate("UPDATE users SET public_id = ? WHERE id = ?"), (_public_id(), row["id"]))
 
 
 def ensure_card_image_columns():
@@ -304,6 +386,54 @@ def ensure_card_image_columns():
                 cur.execute(f"ALTER TABLE cards ADD COLUMN {column} {column_type}")
 
 
+def ensure_order_columns():
+    wanted = {"quantity": "INTEGER NOT NULL DEFAULT 1", "delivered_details": "TEXT"}
+    with connection() as conn:
+        cur = conn.cursor()
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'orders'
+                """
+            )
+            columns = {row["column_name"] for row in cur.fetchall()}
+        else:
+            cur.execute("PRAGMA table_info(orders)")
+            columns = {row["name"] for row in cur.fetchall()}
+
+        for column, column_type in wanted.items():
+            if column not in columns:
+                cur.execute(f"ALTER TABLE orders ADD COLUMN {column} {column_type}")
+
+
+def ensure_site_settings_table():
+    if using_postgres():
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS site_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
+
+
+def ensure_indexes():
+    statements = [
+        "CREATE INDEX IF NOT EXISTS idx_users_public_id ON users(public_id)",
+        "CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_deposits_user_status ON deposits(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_card_stock_card_status ON card_stock(card_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_custom_orders_user_status ON custom_orders(user_id, status)",
+    ]
+    with connection() as conn:
+        cur = conn.cursor()
+        for statement in statements:
+            cur.execute(statement)
+
+
 def seed_admin_credentials():
     if query_one("SELECT id FROM admin_credentials ORDER BY id LIMIT 1"):
         return
@@ -320,6 +450,12 @@ def seed_admin_credentials():
 
 
 def seed_defaults():
+    if not query_one("SELECT key FROM site_settings WHERE key = ?", ("helper_email",)):
+        execute(
+            "INSERT INTO site_settings (key, value) VALUES (?, ?)",
+            ("helper_email", "support@example.com"),
+        )
+
     if not query_one("SELECT id FROM crypto_addresses LIMIT 1"):
         enabled_value = True if using_postgres() else 1
         addresses = [

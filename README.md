@@ -3,12 +3,16 @@
 Flask website with:
 
 - Login and account creation page matching the supplied Russian Market image.
-- One login page for user login, account creation, and admin login.
+- One login page: user credentials open the user dashboard, admin credentials open the admin panel automatically.
 - Profile name during account creation; the dashboard shows the profile name after login.
 - Mobile-first card shop based on the supplied video.
 - User balance, history, deposit history, transaction ID submission, purchases, and approved card details.
 - Admin panel for product/card uploads/details, payment method adding, deposit approvals, order approvals, and user list.
 - Admin panel can change the admin username and password; after a change, the old credentials no longer work.
+- User unique IDs are generated automatically and searchable from the admin panel.
+- User and admin screens use section tabs so only the selected section is shown.
+- Product stock can be uploaded in advance; purchases auto-deliver available stock, otherwise the order waits for admin approval.
+- Custom card order and helper email settings are included.
 - Card upload images are stored in the database, so Render redeploys do not remove uploaded product images when `DATABASE_URL` is set.
 - Neon Postgres support through `DATABASE_URL`, with SQLite fallback for local testing.
 
